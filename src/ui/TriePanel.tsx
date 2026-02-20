@@ -1,5 +1,7 @@
 import type { TrieGraph, TrieGraphNode } from '../mpt/types';
 import type { SimulationStep } from '../mpt/simulator';
+import type { LearningLens } from './types/learning';
+import type { StepFrame } from './utils/stepViewModel';
 import { TrieGraphView } from './trieGraph/TrieGraphView';
 
 interface TriePanelProps {
@@ -10,8 +12,14 @@ interface TriePanelProps {
   currentStep?: SimulationStep;
   keyNibbles: number[];
   consumedCount: number;
-  activeNibbleIndex?: number;
+  activeNibblePosition?: number;
+  decisionNibble?: number;
   learningMode: boolean;
+  lens: LearningLens;
+  stepFrame?: StepFrame;
+  focusNodeIds: string[];
+  focusEdgeIds: string[];
+  pathOnlyFocusEnabled: boolean;
   playing: boolean;
   onSelectNode: (node: TrieGraphNode) => void;
   onSelectNodeId?: (nodeId: string) => void;

@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node api.js && vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
@@ -25,6 +25,8 @@
     "@ethereumjs/rlp": "^10.1.1",
     "@noble/hashes": "^2.0.1",
     "dagre": "^0.8.5",
+    "dotenv": "^8.2.0",
+    "node-fetch": "^3.3.2",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   }

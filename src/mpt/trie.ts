@@ -519,8 +519,14 @@ function resolveNodeWithoutTrace(ref: NodeRef, db: InMemoryKvStore): ResolvedNod
   };
 }
 
-export function buildTrieGraph(rootRef: NodeRef, db: InMemoryKvStore): TrieGraph {
-  if (rootRef.length === 0) {
+export interface BuildTrieGraphOptions {
+  includeDetachedHashes?: boolean;
+}
+
+export function buildTrieGraph(rootRef: NodeRef, db: InMemoryKvStore, options: BuildTrieGraphOptions = {}): TrieGraph {
+  const includeDetachedHashes = options.includeDetachedHashes ?? false;
+
+  if (rootRef.length === 0 && !includeDetachedHashes) {
     return { nodes: [], edges: [], width: 800, height: 500 };
   }
 
@@ -557,6 +563,7 @@ export function buildTrieGraph(rootRef: NodeRef, db: InMemoryKvStore): TrieGraph
         summary: summaryForNode(resolved.node),
         detail: detailForNode(resolved.node),
         inspection,
+        reachable: false,
       });
       discovery.push(nodeId);
       depthById.set(nodeId, depth);
@@ -607,9 +614,63 @@ export function buildTrieGraph(rootRef: NodeRef, db: InMemoryKvStore): TrieGraph
 
   rootId = visitRef(rootRef, 0) ?? '';
 
+  if (includeDetachedHashes) {
+    for (const entry of db.entries()) {
+      try {
+        const ref = hexToBytes(entry.keyHex);
+        if (ref.length !== 32) {
+          continue;
+        }
+        visitRef(ref, 0);
+      } catch {
+        // Ignore malformed DB keys in visualization mode.
+      }
+    }
+  }
+
+  const outgoing = new Map<string, string[]>();
+  for (const edge of edges) {
+    const list = outgoing.get(edge.from);
+    if (list) {
+      list.push(edge.to);
+    } else {
+      outgoing.set(edge.from, [edge.to]);
+    }
+  }
+
+  const reachableIds = new Set<string>();
+  if (rootId) {
+    const queue: string[] = [rootId];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (reachableIds.has(current)) {
+        continue;
+      }
+      reachableIds.add(current);
+      const next = outgoing.get(current) ?? [];
+      for (const nodeId of next) {
+        if (!reachableIds.has(nodeId)) {
+          queue.push(nodeId);
+        }
+      }
+    }
+  }
+
+  let maxReachableDepth = 0;
+  for (const nodeId of discovery) {
+    if (reachableIds.has(nodeId)) {
+      maxReachableDepth = Math.max(maxReachableDepth, depthById.get(nodeId) ?? 0);
+    }
+  }
+
+  for (const node of nodesById.values()) {
+    node.reachable = reachableIds.has(node.id);
+  }
+
   const levels = new Map<number, string[]>();
   for (const nodeId of discovery) {
-    const depth = depthById.get(nodeId) ?? 0;
+    const baseDepth = depthById.get(nodeId) ?? 0;
+    const depth = reachableIds.has(nodeId) ? baseDepth : baseDepth + maxReachableDepth + 1;
     const list = levels.get(depth);
     if (list) {
       list.push(nodeId);

@@ -26,6 +26,7 @@ export interface TrieRenderNode {
   detail: string;
   meta: string;
   tooltip: string;
+  reachable: boolean;
   branchMeta?: BranchMeta;
 }
 
@@ -158,6 +159,7 @@ function buildNode(node: TrieGraphNode, edgeMap: Map<number, TrieRenderEdge>): T
     detail,
     meta: metaRef,
     tooltip: buildTooltip(node),
+    reachable: node.reachable !== false,
     branchMeta: node.type === 'branch' ? buildBranchMeta(node, edgeMap) : undefined,
   };
 }
@@ -202,3 +204,4 @@ export function buildRenderGraph(graph: TrieGraph): TrieRenderGraph {
     signature: buildSignature(nodes, edges),
   };
 }
+
