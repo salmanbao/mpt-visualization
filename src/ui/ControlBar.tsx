@@ -1,5 +1,6 @@
 import type { GeneratedAccount } from '../mpt/account';
 import type { SimulationMode } from '../mpt/simulator';
+import { LEARNING_LENSES, lensLabel, type LearningLens } from './types/learning';
 
 interface ControlBarProps {
   seed: string;
@@ -13,6 +14,7 @@ interface ControlBarProps {
   canNext: boolean;
   debugMode: boolean;
   learningMode: boolean;
+  lens: LearningLens;
   useCache: boolean;
   indexedDbMode: boolean;
   accounts: GeneratedAccount[];
@@ -32,8 +34,10 @@ interface ControlBarProps {
   onSpeedChange: (value: number) => void;
   onDebugModeChange: (value: boolean) => void;
   onLearningModeChange: (value: boolean) => void;
+  onLensChange: (value: LearningLens) => void;
   onUseCacheChange: (value: boolean) => void;
   onIndexedDbModeChange: (value: boolean) => void;
+  onShowWalkthrough: () => void;
   onReset: () => void;
 }
 
@@ -155,6 +159,30 @@ export function ControlBar(props: ControlBarProps) {
           onChange={(event) => props.onSpeedChange(Number(event.target.value))}
         />
       </div>
+
+      {props.learningMode && (
+        <div className="control-group">
+          <label htmlFor="lens-select">Audience lens</label>
+          <select
+            id="lens-select"
+            className="select"
+            value={props.lens}
+            onChange={(event) => props.onLensChange(event.target.value as LearningLens)}
+          >
+            {LEARNING_LENSES.map((lens) => (
+              <option key={lens} value={lens}>
+                {lensLabel(lens)}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {props.learningMode && (
+        <button type="button" className="button" onClick={props.onShowWalkthrough}>
+          Walkthrough
+        </button>
+      )}
 
       <label className="toggle">
         <input

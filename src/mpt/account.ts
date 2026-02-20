@@ -74,11 +74,14 @@ export function decodeAccountValue(encoded: Uint8Array): DecodedAccountValue {
 
 export function addressToTrieKey(addressHex: string): { keyHash: Uint8Array; keyNibbles: number[] } {
   const normalized = addressHex.startsWith('0x') ? addressHex : `0x${addressHex}`;
+  console.log(`Normalized address: ${normalized}`);
   const addressBytes = hexToBytes(normalized);
+  console.log(`Address bytes: ${addressBytes}`);
   if (addressBytes.length !== 20) {
     throw new Error(`Address must be 20 bytes, got ${addressBytes.length}`);
   }
   const keyHash = keccak(addressBytes);
+  console.log(`Key hash: ${keyHash}`);
   return {
     keyHash,
     keyNibbles: toNibbles(keyHash),
@@ -99,6 +102,7 @@ export function generateAccounts(seed: number, count: number): GeneratedAccount[
     const balance = BigInt(1 + Math.floor(rng() * 9_999_999));
     const nonce = 0n;
     const keyHash = keccak(addressBytes);
+    console.log(`Generated address=${address},  keyHash=${bytesToHex(keyHash)}`);
     accounts.push({
       address,
       balance,

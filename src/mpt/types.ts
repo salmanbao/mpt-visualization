@@ -72,6 +72,7 @@ export interface TrieGraphNode {
   summary: string;
   detail: string;
   inspection: NodeInspection;
+  reachable: boolean;
 }
 
 export interface TrieGraphEdge {
@@ -89,3 +90,4 @@ export interface TrieGraph {
   height: number;
   rootId?: string;
 }
+

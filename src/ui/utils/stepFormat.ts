@@ -1,5 +1,6 @@
 import type { SimulationStep } from '../../mpt/simulator';
-import { nibblesToString, shortHex } from '../../mpt/bytes';
+import { nibblesToString } from '../../mpt/bytes';
+import { humanizeStepMessage } from './stepText';
 
 export type EventLogFilter = 'all' | 'trie' | 'db' | 'key' | 'root' | 'cache';
 
@@ -63,7 +64,8 @@ export function formatStep(rawStep: SimulationStep, index: number): FormattedSte
   const raw = asRecord(rawStep);
   const activeNode = asRecord(raw.activeNode);
   const title = asString(raw.title) ?? 'STEP';
-  const message = asString(raw.log) ?? asString(raw.message) ?? title;
+  const messageRaw = asString(raw.log) ?? asString(raw.message) ?? title;
+  const message = humanizeStepMessage(messageRaw);
   const nodeType = asString(activeNode.type) ?? asString(raw.nodeType);
   const dbKey = asString(raw.highlightedDbKey) ?? asString(raw.dbKeyHex) ?? asString(raw.dbKey);
   const dbActionRaw = asString(raw.dbAction) ?? asString(raw.action) ?? asString(raw.op);
@@ -74,7 +76,7 @@ export function formatStep(rawStep: SimulationStep, index: number): FormattedSte
   const keyPrefix = nibblePrefix(raw.keyNibbles);
   const refKind = asString(activeNode.refKind) ?? asString(raw.refKind);
   const changedCount = Array.isArray(raw.changedNodeIds) ? raw.changedNodeIds.length : undefined;
-  const branchIndex = findBranchIndex(message);
+  const branchIndex = findBranchIndex(messageRaw);
 
   let category: FormattedStep['category'] = 'trie';
   if (cacheHit) {
@@ -115,7 +117,7 @@ export function formatStep(rawStep: SimulationStep, index: number): FormattedSte
     chips.push({ label: 'cache hit' });
   }
   if (dbKey) {
-    chips.push({ label: shortHex(dbKey, 6) });
+    chips.push({ label: 'db-key' });
   }
 
   const badge = dbAction ?? (cacheHit ? 'CACHE' : title.split(/\s+/)[0].toUpperCase());
@@ -147,3 +149,7 @@ export function stepMatchesFilter(step: FormattedStep, filter: EventLogFilter): 
   }
   return step.category === filter;
 }
+
+
+
+

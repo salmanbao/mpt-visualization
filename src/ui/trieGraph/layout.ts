@@ -24,6 +24,8 @@ export interface TrieLayoutResult {
   signature: string;
 }
 
+const layoutCache = new Map<string, TrieLayoutResult>();
+
 function emptyBounds(): LayoutBounds {
   return {
     minX: 0,
@@ -36,12 +38,19 @@ function emptyBounds(): LayoutBounds {
 }
 
 export function computeDagreLayout(graph: TrieRenderGraph): TrieLayoutResult {
+  const cached = layoutCache.get(graph.signature);
+  if (cached) {
+    return cached;
+  }
+
   if (graph.nodes.length === 0) {
-    return {
+    const empty = {
       positions: {},
       bounds: emptyBounds(),
       signature: graph.signature,
     };
+    layoutCache.set(graph.signature, empty);
+    return empty;
   }
 
   const g = new dagre.graphlib.Graph({ multigraph: false, compound: false });
@@ -102,9 +111,19 @@ export function computeDagreLayout(graph: TrieRenderGraph): TrieLayoutResult {
       }
     : emptyBounds();
 
-  return {
+  const result = {
     positions,
     bounds,
     signature: graph.signature,
   };
+
+  layoutCache.set(graph.signature, result);
+  if (layoutCache.size > 96) {
+    const oldest = layoutCache.keys().next().value;
+    if (oldest) {
+      layoutCache.delete(oldest);
+    }
+  }
+
+  return result;
 }

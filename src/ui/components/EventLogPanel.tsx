@@ -1,22 +1,32 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { SimulationStep } from '../../mpt/simulator';
 import { formatStep, stepMatchesFilter, type EventLogFilter, type FormattedStep } from '../utils/stepFormat';
+import type { LearningLens } from '../types/learning';
 import type { PedagogicalStep } from '../utils/stepPedagogy';
+import type { StepFrame } from '../utils/stepViewModel';
 import { StepDetails } from './StepDetails';
 
 interface EventLogPanelProps {
   steps: SimulationStep[];
   pedSteps: PedagogicalStep[];
+  stepFrames: StepFrame[];
   stepIndex: number;
   onStepChange: (index: number) => void;
   debugMode: boolean;
   learningMode: boolean;
+  lens: LearningLens;
+  forceShowInternalsKey?: number;
   onRevealDbKey?: (key: string) => void;
   onFocusNode?: (nodeId: string) => void;
 }
 
-const LOG_HEIGHT = 232;
-const ROW_HEIGHT = 56;
+type LogDensity = 'compact' | 'comfortable';
+
+const LOG_HEIGHT = 248;
+const ROW_HEIGHT: Record<LogDensity, number> = {
+  compact: 56,
+  comfortable: 74,
+};
 const OVERSCAN = 8;
 const FILTERS: EventLogFilter[] = ['all', 'trie', 'db', 'key', 'root', 'cache'];
 
@@ -25,32 +35,40 @@ interface EventRowProps {
   pedStep?: PedagogicalStep;
   isCurrent: boolean;
   top: number;
+  height: number;
   learningMode: boolean;
   showInternals: boolean;
+  lens: LearningLens;
   onSelect: (index: number) => void;
 }
 
 const EventRow = memo(function EventRow(props: EventRowProps) {
-  const message = props.learningMode ? props.pedStep?.conciseText ?? props.step.message : props.step.message;
+  const message =
+    props.learningMode && props.pedStep
+      ? props.lens === 'foundational'
+        ? props.pedStep.conciseText
+        : props.pedStep.lensText[props.lens]
+      : props.step.message;
+
+  const showChips = !props.learningMode || props.lens !== 'foundational' || props.showInternals;
+
   return (
     <button
       type="button"
       className={`event-row ${props.isCurrent ? 'event-row-current' : ''} event-row-${props.step.category}`}
-      style={{ top: `${props.top}px`, height: `${ROW_HEIGHT - 4}px` }}
+      style={{ top: `${props.top}px`, height: `${props.height - 4}px` }}
       onClick={() => props.onSelect(props.step.index)}
     >
       <span className="event-step-no">{props.step.index + 1}</span>
       <span className="event-badge">{props.step.badge}</span>
       <span className="event-message">{message}</span>
-      {(props.showInternals || !props.learningMode) && (
-        <span className="event-chip-list">
-          {props.step.chips.slice(0, 5).map((chip, index) => (
-            <span key={`${chip.label}-${index}`} className="event-chip">
-              {chip.label}
-            </span>
-          ))}
-        </span>
-      )}
+      <span className={`event-chip-list ${showChips ? '' : 'event-chip-list-muted'}`}>
+        {props.step.chips.slice(0, 5).map((chip, index) => (
+          <span key={`${chip.label}-${index}`} className="event-chip">
+            {chip.label}
+          </span>
+        ))}
+      </span>
     </button>
   );
 });
@@ -60,15 +78,25 @@ export function EventLogPanel(props: EventLogPanelProps) {
   const [filter, setFilter] = useState<EventLogFilter>('all');
   const [autoFollow, setAutoFollow] = useState(true);
   const [detailsOpen, setDetailsOpen] = useState(true);
-  const [showInternals, setShowInternals] = useState(!props.learningMode);
+  const [showInternals, setShowInternals] = useState(!props.learningMode || props.lens !== 'foundational');
+  const [density, setDensity] = useState<LogDensity>('comfortable');
   const [scrollTop, setScrollTop] = useState(0);
   const [listHeight, setListHeight] = useState(LOG_HEIGHT);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setShowInternals(!props.learningMode);
-  }, [props.learningMode]);
+    setShowInternals(!props.learningMode || props.lens !== 'foundational');
+  }, [props.learningMode, props.lens]);
 
+  useEffect(() => {
+    if (props.forceShowInternalsKey === undefined) {
+      return;
+    }
+    setShowInternals(true);
+    setDetailsOpen(true);
+  }, [props.forceShowInternalsKey]);
+
+  const rowHeight = ROW_HEIGHT[density];
   const formattedSteps = useMemo(() => props.steps.map((step, index) => formatStep(step, index)), [props.steps]);
   const filteredIndexes = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -78,23 +106,25 @@ export function EventLogPanel(props: EventLogPanelProps) {
         continue;
       }
       const ped = props.pedSteps[step.index];
-      const searchable = `${step.searchable} ${ped?.whyText ?? ''} ${ped?.whatText ?? ''}`.toLowerCase();
+      const frame = props.stepFrames[step.index];
+      const searchable = `${step.searchable} ${ped?.whyText ?? ''} ${ped?.whatText ?? ''} ${frame?.mechanism ?? ''}`.toLowerCase();
       if (query && !searchable.includes(query)) {
         continue;
       }
       out.push(step.index);
     }
     return out;
-  }, [filter, formattedSteps, props.pedSteps, search]);
+  }, [filter, formattedSteps, props.pedSteps, props.stepFrames, search]);
 
   const selectedStep = props.steps[props.stepIndex];
   const selectedFormatted = formattedSteps[props.stepIndex];
   const selectedPed = props.pedSteps[props.stepIndex];
+  const selectedFrame = props.stepFrames[props.stepIndex];
   const selectedVisibleIndex = filteredIndexes.indexOf(props.stepIndex);
-  const totalHeight = filteredIndexes.length * ROW_HEIGHT;
+  const totalHeight = filteredIndexes.length * rowHeight;
 
-  const windowStart = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
-  const windowCount = Math.ceil(listHeight / ROW_HEIGHT) + OVERSCAN * 2;
+  const windowStart = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN);
+  const windowCount = Math.ceil(listHeight / rowHeight) + OVERSCAN * 2;
   const windowEnd = Math.min(filteredIndexes.length, windowStart + windowCount);
   const visibleIndexes = filteredIndexes.slice(windowStart, windowEnd);
 
@@ -104,13 +134,13 @@ export function EventLogPanel(props: EventLogPanelProps) {
       return;
     }
     const updateHeight = (): void => {
-      setListHeight(Math.max(ROW_HEIGHT * 2, node.clientHeight));
+      setListHeight(Math.max(rowHeight * 2, node.clientHeight));
     };
     updateHeight();
     const observer = new ResizeObserver(() => updateHeight());
     observer.observe(node);
     return () => observer.disconnect();
-  }, []);
+  }, [rowHeight]);
 
   useEffect(() => {
     if (!autoFollow) {
@@ -123,14 +153,14 @@ export function EventLogPanel(props: EventLogPanelProps) {
     if (!node) {
       return;
     }
-    const top = selectedVisibleIndex * ROW_HEIGHT;
-    const bottom = top + ROW_HEIGHT;
+    const top = selectedVisibleIndex * rowHeight;
+    const bottom = top + rowHeight;
     if (top < node.scrollTop) {
-      node.scrollTop = Math.max(0, top - ROW_HEIGHT * 2);
+      node.scrollTop = Math.max(0, top - rowHeight * 2);
     } else if (bottom > node.scrollTop + node.clientHeight) {
-      node.scrollTop = Math.max(0, bottom - node.clientHeight + ROW_HEIGHT * 2);
+      node.scrollTop = Math.max(0, bottom - node.clientHeight + rowHeight * 2);
     }
-  }, [autoFollow, selectedVisibleIndex, props.stepIndex]);
+  }, [autoFollow, rowHeight, selectedVisibleIndex, props.stepIndex]);
 
   const handleStepSelect = (index: number): void => {
     props.onStepChange(index);
@@ -154,10 +184,14 @@ export function EventLogPanel(props: EventLogPanelProps) {
     }
     const current = filteredIndexes.indexOf(props.stepIndex);
     const safeCurrent = current >= 0 ? current : 0;
-    const next = event.key === 'ArrowDown'
-      ? Math.min(filteredIndexes.length - 1, safeCurrent + 1)
-      : Math.max(0, safeCurrent - 1);
+    const next = event.key === 'ArrowDown' ? Math.min(filteredIndexes.length - 1, safeCurrent + 1) : Math.max(0, safeCurrent - 1);
     props.onStepChange(filteredIndexes[next]);
+  };
+
+  const resetView = (): void => {
+    setSearch('');
+    setFilter('all');
+    setDensity('comfortable');
   };
 
   return (
@@ -190,14 +224,29 @@ export function EventLogPanel(props: EventLogPanelProps) {
             {showInternals ? 'Hide internals' : 'Show internals'}
           </button>
         )}
+        <button
+          type="button"
+          className="mini-button"
+          onClick={() => setDensity((prev) => (prev === 'compact' ? 'comfortable' : 'compact'))}
+        >
+          Density: {density}
+        </button>
         <label className="toggle event-autofollow">
           <input type="checkbox" checked={autoFollow} onChange={(event) => setAutoFollow(event.target.checked)} />
           Auto-follow
         </label>
-        <button type="button" className="button" disabled title="Use Build Trie or Reset to clear log">
-          Clear
+        <button type="button" className="button" onClick={resetView}>
+          Reset filters
         </button>
       </header>
+
+      {selectedFrame && (
+        <div className="event-causality-strip">
+          <span>{selectedFrame.causalitySpine[0]}</span>
+          <span>{selectedFrame.causalitySpine[1]}</span>
+          <span>{selectedFrame.causalitySpine[2]}</span>
+        </div>
+      )}
 
       <div className="event-log-body">
         <div className="event-log-list" ref={listRef} onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
@@ -214,9 +263,11 @@ export function EventLogPanel(props: EventLogPanelProps) {
                     step={step}
                     pedStep={props.pedSteps[rawIndex]}
                     isCurrent={rawIndex === props.stepIndex}
-                    top={logicalIndex * ROW_HEIGHT}
+                    top={logicalIndex * rowHeight}
+                    height={rowHeight}
                     learningMode={props.learningMode}
                     showInternals={showInternals}
+                    lens={props.lens}
                     onSelect={handleStepSelect}
                   />
                 );
@@ -237,8 +288,11 @@ export function EventLogPanel(props: EventLogPanelProps) {
               step={selectedStep}
               formatted={selectedFormatted}
               pedStep={selectedPed}
+              stepFrame={selectedFrame}
               debugMode={props.debugMode}
               learningMode={props.learningMode}
+              lens={props.lens}
+              forceInternalsKey={props.forceShowInternalsKey}
               onRevealDbKey={props.onRevealDbKey}
               onFocusNode={props.onFocusNode}
             />

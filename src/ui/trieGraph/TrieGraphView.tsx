@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TrieGraph, TrieGraphNode } from '../../mpt/types';
 import type { SimulationStep } from '../../mpt/simulator';
+import type { LearningLens } from '../types/learning';
+import type { StepFrame } from '../utils/stepViewModel';
 import { KeyProgressRibbon } from '../components/KeyProgressRibbon';
-import { buildRenderGraph, shortIdentifier } from './buildGraph';
+import { buildRenderGraph, shortIdentifier, type TrieRenderEdge, type TrieRenderNode } from './buildGraph';
 import { computeDagreLayout } from './layout';
 
 interface TrieGraphViewProps {
@@ -13,8 +15,14 @@ interface TrieGraphViewProps {
   currentStep?: SimulationStep;
   keyNibbles: number[];
   consumedCount: number;
-  activeNibbleIndex?: number;
+  activeNibblePosition?: number;
+  decisionNibble?: number;
   learningMode: boolean;
+  lens: LearningLens;
+  stepFrame?: StepFrame;
+  focusNodeIds: string[];
+  focusEdgeIds: string[];
+  pathOnlyFocusEnabled: boolean;
   playing: boolean;
   onSelectNode: (node: TrieGraphNode) => void;
   onSelectNodeId?: (nodeId: string) => void;
@@ -23,10 +31,17 @@ interface TrieGraphViewProps {
 
 interface BranchDecision {
   nodeId?: string;
-  index: number;
+  nibble: number;
+}
+
+interface ViewState {
+  zoom: number;
+  offsetX: number;
+  offsetY: number;
 }
 
 const LABEL_MAX = 30;
+const ORPHAN_VISIBILITY_STEPS = 30;
 
 function fitLabel(text: string, max = LABEL_MAX): string {
   if (text.length <= max) {
@@ -60,18 +75,18 @@ function inferBranchDecision(step?: SimulationStep): BranchDecision | undefined 
   }
   return {
     nodeId: step.activeNodeId,
-    index: Number.parseInt(match[1], 16),
+    nibble: Number.parseInt(match[1], 16),
   };
-}
-
-interface ViewState {
-  zoom: number;
-  offsetX: number;
-  offsetY: number;
 }
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function buildVisibleSignature(nodes: TrieRenderNode[], edges: TrieRenderEdge[], rootId?: string): string {
+  const nodePart = nodes.map((node) => node.id).sort().join('|');
+  const edgePart = edges.map((edge) => `${edge.source}>${edge.target}:${edge.label}`).sort().join('|');
+  return `${rootId ?? ''}::${nodePart}::${edgePart}`;
 }
 
 export function TrieGraphView(props: TrieGraphViewProps) {
@@ -79,14 +94,62 @@ export function TrieGraphView(props: TrieGraphViewProps) {
   const dragRef = useRef<{ x: number; y: number; active: boolean }>({ x: 0, y: 0, active: false });
   const [view, setView] = useState<ViewState>({ zoom: 1, offsetX: 40, offsetY: 24 });
   const [focusLock, setFocusLock] = useState(false);
+  const [orphanAgeById, setOrphanAgeById] = useState<Record<string, number>>({});
 
   const renderGraph = useMemo(() => buildRenderGraph(props.graph), [props.graph]);
-  const layout = useMemo(() => computeDagreLayout(renderGraph), [renderGraph]);
   const fallbackDecision = useMemo(() => inferBranchDecision(props.currentStep), [props.currentStep]);
+
+  const focusNodeSet = useMemo(() => new Set(props.focusNodeIds), [props.focusNodeIds]);
+  const focusEdgeSet = useMemo(() => new Set(props.focusEdgeIds), [props.focusEdgeIds]);
+  const changedSet = useMemo(() => new Set(props.changedNodeIds), [props.changedNodeIds]);
+
+  const currentOrphanIds = useMemo(
+    () => renderGraph.nodes.filter((node) => !node.reachable).map((node) => node.id),
+    [renderGraph.nodes],
+  );
+  const orphanSignature = useMemo(() => currentOrphanIds.slice().sort().join('|'), [currentOrphanIds]);
+
+  useEffect(() => {
+    setOrphanAgeById((previous) => {
+      const next: Record<string, number> = {};
+      for (const id of currentOrphanIds) {
+        const prevAge = previous[id];
+        const nextAge = prevAge === undefined ? 0 : prevAge + 1;
+        if (nextAge <= ORPHAN_VISIBILITY_STEPS) {
+          next[id] = nextAge;
+        }
+      }
+      return next;
+    });
+  }, [orphanSignature, props.currentStep?.id]);
+
+  const visibleNodes = useMemo(
+    () => renderGraph.nodes.filter((node) => node.reachable || orphanAgeById[node.id] !== undefined),
+    [orphanAgeById, renderGraph.nodes],
+  );
+
+  const visibleNodeIdSet = useMemo(() => new Set(visibleNodes.map((node) => node.id)), [visibleNodes]);
+
+  const visibleEdges = useMemo(
+    () => renderGraph.edges.filter((edge) => visibleNodeIdSet.has(edge.source) && visibleNodeIdSet.has(edge.target)),
+    [renderGraph.edges, visibleNodeIdSet],
+  );
+
+  const visibleGraph = useMemo(
+    () => ({
+      nodes: visibleNodes,
+      edges: visibleEdges,
+      rootId: renderGraph.rootId,
+      signature: buildVisibleSignature(visibleNodes, visibleEdges, renderGraph.rootId),
+    }),
+    [renderGraph.rootId, visibleEdges, visibleNodes],
+  );
+
+  const layout = useMemo(() => computeDagreLayout(visibleGraph), [visibleGraph]);
 
   const fitView = useCallback(() => {
     const root = containerRef.current;
-    if (!root || renderGraph.nodes.length === 0) {
+    if (!root || visibleNodes.length === 0) {
       return;
     }
     const rect = root.getBoundingClientRect();
@@ -98,27 +161,30 @@ export function TrieGraphView(props: TrieGraphViewProps) {
     const offsetX = padding + (availableWidth - layout.bounds.width * zoom) / 2 - layout.bounds.minX * zoom;
     const offsetY = padding + (availableHeight - layout.bounds.height * zoom) / 2 - layout.bounds.minY * zoom;
     setView({ zoom, offsetX, offsetY });
-  }, [layout.bounds.height, layout.bounds.minX, layout.bounds.minY, layout.bounds.width, renderGraph.nodes.length]);
+  }, [layout.bounds.height, layout.bounds.minX, layout.bounds.minY, layout.bounds.width, visibleNodes.length]);
 
-  const centerOnNode = useCallback((nodeId: string): void => {
-    const root = containerRef.current;
-    const position = layout.positions[nodeId];
-    if (!root || !position) {
-      return;
-    }
-    const rect = root.getBoundingClientRect();
-    const nodeCenterX = position.x + position.width / 2;
-    const nodeCenterY = position.y + position.height / 2;
-    setView((prev) => ({
-      ...prev,
-      offsetX: rect.width / 2 - nodeCenterX * prev.zoom,
-      offsetY: rect.height / 2 - nodeCenterY * prev.zoom,
-    }));
-  }, [layout.positions]);
+  const centerOnNode = useCallback(
+    (nodeId: string): void => {
+      const root = containerRef.current;
+      const position = layout.positions[nodeId];
+      if (!root || !position) {
+        return;
+      }
+      const rect = root.getBoundingClientRect();
+      const nodeCenterX = position.x + position.width / 2;
+      const nodeCenterY = position.y + position.height / 2;
+      setView((prev) => ({
+        ...prev,
+        offsetX: rect.width / 2 - nodeCenterX * prev.zoom,
+        offsetY: rect.height / 2 - nodeCenterY * prev.zoom,
+      }));
+    },
+    [layout.positions],
+  );
 
   useEffect(() => {
     fitView();
-  }, [fitView, layout.signature]);
+  }, [fitView, visibleGraph.signature]);
 
   useEffect(() => {
     if (!focusLock || !props.playing || !props.activeNodeId) {
@@ -170,7 +236,7 @@ export function TrieGraphView(props: TrieGraphViewProps) {
     });
   };
 
-  const positionedNodes = renderGraph.nodes.map((node) => {
+  const positionedNodes = visibleNodes.map((node) => {
     const position = layout.positions[node.id];
     return {
       ...node,
@@ -187,7 +253,30 @@ export function TrieGraphView(props: TrieGraphViewProps) {
     return map;
   }, [positionedNodes]);
 
-  const changedSet = useMemo(() => new Set(props.changedNodeIds), [props.changedNodeIds]);
+  const visibleOrphanNodes = useMemo(() => positionedNodes.filter((node) => !node.reachable), [positionedNodes]);
+  const incomingCountByNodeId = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const node of positionedNodes) {
+      map[node.id] = 0;
+    }
+    for (const edge of visibleEdges) {
+      map[edge.target] = (map[edge.target] ?? 0) + 1;
+    }
+    return map;
+  }, [positionedNodes, visibleEdges]);
+
+  const canonicalRootId = visibleGraph.rootId;
+
+  const orphanTotalCount = currentOrphanIds.length;
+  const orphanVisibleCount = visibleNodes.filter((node) => !node.reachable).length;
+  const orphanRetiredCount = Math.max(0, orphanTotalCount - orphanVisibleCount);
+
+  const ribbonTitle =
+    props.lens === 'foundational'
+      ? 'Key Progress'
+      : props.lens === 'developer'
+        ? 'Key Progress (keccak(address) nibbles)'
+        : 'Key Progress (state trie key nibbles from keccak(address))';
 
   return (
     <section className="panel">
@@ -211,16 +300,70 @@ export function TrieGraphView(props: TrieGraphViewProps) {
           <KeyProgressRibbon
             fullKeyNibbles={props.keyNibbles}
             consumedCount={props.consumedCount}
-            activeNibbleIndex={props.activeNibbleIndex}
+            activeNibblePosition={props.activeNibblePosition}
+            title={ribbonTitle}
           />
           <div className="trie-legend">
-            <span><i className="legend-swatch legend-branch" /> Branch</span>
-            <span><i className="legend-swatch legend-extension" /> Extension</span>
-            <span><i className="legend-swatch legend-leaf" /> Leaf</span>
-            <span><i className="legend-line legend-embedded" /> embedded edge</span>
-            <span><i className="legend-line legend-hash" /> hash-ref edge</span>
-            <span><i className="legend-cell legend-cell-used" /> used branch index</span>
-          </div>
+            <span>
+              <i className="legend-swatch legend-branch" /> Branch
+            </span>
+            <span>
+              <i className="legend-swatch legend-extension" /> Extension
+            </span>
+            <span>
+              <i className="legend-swatch legend-leaf" /> Leaf
+            </span>
+            <span>
+              <i className="legend-line legend-embedded" /> embedded edge
+            </span>
+            <span>
+              <i className="legend-line legend-hash" /> hash-ref edge
+            </span>
+            <span>
+              <i className="legend-line legend-orphan" /> orphan/temporary edge
+            </span>
+            <span>
+              <i className="legend-cell legend-root-badge" /> ROOT node (canonical)
+            </span>
+            <span>
+              <i className="legend-cell legend-detached-badge" /> detached top node (historical)
+            </span>
+            <span>
+              <i className="legend-cell legend-cell-used" /> used branch index
+            </span>
+            {props.pathOnlyFocusEnabled && <span className="legend-causal">Path focus: {props.stepFrame?.focusReason}</span>}
+            {props.stepFrame && !props.pathOnlyFocusEnabled && <span className="legend-causal">{props.stepFrame.mechanism}</span>}
+            {orphanTotalCount > 0 && (
+              <span className="legend-causal legend-orphan-note">
+                Orphan/temporary nodes shown then retired: {orphanVisibleCount} visible, {orphanRetiredCount} retired. DB keeps all hashes.
+              </span>
+            )}
+                    </div>
+          {(visibleOrphanNodes.length > 0 || orphanRetiredCount > 0) && (
+            <div className="trie-orphan-strip">
+              <strong>Orphan / temporary nodes</strong>
+              {visibleOrphanNodes.length === 0 ? (
+                <span className="muted">No orphan nodes currently visible.</span>
+              ) : (
+                <div className="trie-orphan-list">
+                  {visibleOrphanNodes.map((node) => {
+                    const stepsLeft = Math.max(0, ORPHAN_VISIBILITY_STEPS - (orphanAgeById[node.id] ?? 0));
+                    return (
+                      <button
+                        key={`orphan-${node.id}`}
+                        type="button"
+                        className="trie-orphan-pill"
+                        onClick={() => props.onSelectNode(node.source)}
+                        title={`retires in ${stepsLeft} step(s)`}
+                      >
+                        {node.source.type} {shortIdentifier(node.id)} ({stepsLeft})
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </>
       )}
 
@@ -237,7 +380,7 @@ export function TrieGraphView(props: TrieGraphViewProps) {
         >
           <svg width="100%" height="100%" role="img" aria-label="Trie graph">
             <g transform={`translate(${view.offsetX},${view.offsetY}) scale(${view.zoom})`}>
-              {renderGraph.edges.map((edge) => {
+              {visibleEdges.map((edge) => {
                 const from = nodesById.get(edge.source);
                 const to = nodesById.get(edge.target);
                 if (!from || !to) {
@@ -250,9 +393,23 @@ export function TrieGraphView(props: TrieGraphViewProps) {
                 const bendY = y1 + Math.max(20, (y2 - y1) * 0.5);
                 const labelX = (x1 + x2) / 2;
                 const labelY = bendY - 6;
+                const edgeKey = `${edge.source}>${edge.target}`;
                 const isActiveEdge = props.activeNodeId === edge.source || props.activeNodeId === edge.target;
+                const isOrphanEdge = !from.reachable || !to.reachable;
+                const isFocusEdge =
+                  !props.pathOnlyFocusEnabled ||
+                  isActiveEdge ||
+                  isOrphanEdge ||
+                  focusEdgeSet.has(edgeKey) ||
+                  focusNodeSet.has(edge.source) ||
+                  focusNodeSet.has(edge.target);
                 return (
-                  <g key={edge.id} className={isActiveEdge ? 'edge-active' : ''}>
+                  <g
+                    key={edge.id}
+                    className={`${isActiveEdge ? 'edge-active' : ''} ${isFocusEdge ? '' : 'trie-dimmed'} ${
+                      isOrphanEdge ? 'edge-orphan' : ''
+                    }`}
+                  >
                     <path
                       d={`M ${x1} ${y1} L ${x1} ${bendY} L ${x2} ${bendY} L ${x2} ${y2}`}
                       className={`edge edge-${edge.refKind}`}
@@ -268,16 +425,29 @@ export function TrieGraphView(props: TrieGraphViewProps) {
                 const isActive = props.activeNodeId === node.id;
                 const isChanged = changedSet.has(node.id);
                 const isSelected = props.selectedNodeId === node.id;
+                const isOrphan = !node.reachable;
+                const orphanAge = orphanAgeById[node.id];
+                const isCanonicalRoot = canonicalRootId !== undefined && node.id === canonicalRootId;
+                const isDetachedRoot = !isCanonicalRoot && (incomingCountByNodeId[node.id] ?? 0) === 0;
                 const showBranchGrid = node.source.type === 'branch' && !!node.branchMeta;
                 const branchDecision = fallbackDecision;
-                const decisionIndex =
-                  (branchDecision?.nodeId === node.id ? branchDecision.index : undefined) ??
-                  (props.activeNodeId === node.id ? props.activeNibbleIndex : undefined);
+                const decisionNibble =
+                  (branchDecision?.nodeId === node.id ? branchDecision.nibble : undefined) ??
+                  (props.activeNodeId === node.id ? props.decisionNibble : undefined);
+                const isFocused =
+                  !props.pathOnlyFocusEnabled ||
+                  isActive ||
+                  isChanged ||
+                  isSelected ||
+                  isCanonicalRoot ||
+                  isDetachedRoot ||
+                  isOrphan ||
+                  focusNodeSet.has(node.id);
                 return (
                   <g
                     key={node.id}
                     transform={`translate(${node.x},${node.y})`}
-                    className="trie-node"
+                    className={`trie-node ${isFocused ? '' : 'trie-dimmed'}`}
                     onClick={() => props.onSelectNode(node.source)}
                   >
                     <title>{node.tooltip}</title>
@@ -290,9 +460,28 @@ export function TrieGraphView(props: TrieGraphViewProps) {
                         isActive ? 'node-active' : '',
                         isChanged ? 'node-changed' : '',
                         isSelected ? 'node-selected' : '',
+                        isCanonicalRoot ? 'node-root' : '',
+                        isDetachedRoot ? 'node-detached-root' : '',
+                        isOrphan ? 'node-orphan' : '',
+                        isOrphan && (orphanAge ?? 0) > 0 ? 'node-orphan-fading' : '',
                       ].join(' ')}
                       fill={nodeFill(node.source.type)}
                     />
+                    {isCanonicalRoot && (
+                      <text x={node.width - 10} y={18} className="node-root-tag" textAnchor="end">
+                        ROOT
+                      </text>
+                    )}
+                    {!isCanonicalRoot && isDetachedRoot && (
+                      <text x={node.width - 10} y={18} className="node-detached-tag" textAnchor="end">
+                        detached
+                      </text>
+                    )}
+                    {!isCanonicalRoot && !isDetachedRoot && isOrphan && (
+                      <text x={node.width - 10} y={18} className="node-orphan-tag" textAnchor="end">
+                        orphan
+                      </text>
+                    )}
                     <text x={12} y={22} className="node-title">
                       {fitLabel(node.title)}
                     </text>
@@ -309,7 +498,7 @@ export function TrieGraphView(props: TrieGraphViewProps) {
                           const row = Math.floor(child.index / 4);
                           const x = col * 24;
                           const y = row * 24;
-                          const chosen = decisionIndex === child.index;
+                          const chosen = decisionNibble === child.index;
                           const tooltip = child.present
                             ? [
                                 `index: ${child.index.toString(16)}`,
@@ -373,3 +562,16 @@ export function TrieGraphView(props: TrieGraphViewProps) {
     </section>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+

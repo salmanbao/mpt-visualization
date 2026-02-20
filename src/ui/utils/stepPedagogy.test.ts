@@ -56,19 +56,22 @@ describe('stepPedagogy', () => {
     expect(ped[2].branchIndex).toBe(10);
     expect(ped[2].activeNibbleIndex).toBe(10);
     expect(ped[2].consumedDelta).toBe(1);
+    expect(ped[2].activeNibblePosition).toBe(0);
   });
 
-  it('marks db/root impacts and reference linkage', () => {
+  it('marks db/root impacts and operation root baseline', () => {
     const steps: SimulationStep[] = [
       step({
         id: 0,
-        title: 'ROOT UPDATED',
-        log: 'Root hash updated: 0x01',
+        title: 'LOOKUP START',
+        mode: 'lookup',
+        log: 'Address -> key',
         rootRef: new Uint8Array([0x01]),
       }),
       step({
         id: 1,
         title: 'FINALIZE',
+        mode: 'lookup',
         log: 'Finalize node -> hash-ref',
         rootRef: new Uint8Array([0x02]),
         dbAction: 'PUT',
@@ -84,9 +87,11 @@ describe('stepPedagogy', () => {
     ];
 
     const ped = buildPedagogicalSteps(steps);
+    expect(ped[0].rootTransition.changed).toBe(false);
     expect(ped[1].concept).toBe('DB Write');
     expect(ped[1].impact.dbChanged).toBe(true);
     expect(ped[1].impact.rootChanged).toBe(true);
     expect(ped[1].referencedByActiveNode).toBe(true);
+    expect(ped[1].rootTransition.operationStartHex).toBe('0x01');
   });
 });

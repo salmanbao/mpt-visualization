@@ -1,7 +1,7 @@
 interface KeyProgressRibbonProps {
   fullKeyNibbles: number[];
   consumedCount: number;
-  activeNibbleIndex?: number;
+  activeNibblePosition?: number;
   title?: string;
 }
 
@@ -21,7 +21,7 @@ export function KeyProgressRibbon(props: KeyProgressRibbonProps) {
       <div className="key-progress-row">
         {props.fullKeyNibbles.map((nibble, index) => {
           const consumed = index < props.consumedCount;
-          const active = props.activeNibbleIndex !== undefined && nibble === props.activeNibbleIndex && index === props.consumedCount;
+          const active = props.activeNibblePosition !== undefined && index === props.activeNibblePosition;
           return (
             <span
               key={`n-${index}`}
@@ -30,7 +30,7 @@ export function KeyProgressRibbon(props: KeyProgressRibbonProps) {
                 consumed ? 'key-nibble-consumed' : 'key-nibble-remaining',
                 active ? 'key-nibble-active' : '',
               ].join(' ')}
-              title={`index ${index} | nibble ${nibble.toString(16)} | ${consumed ? 'consumed' : 'remaining'}`}
+              title={`position ${index} | nibble ${nibble.toString(16)} | ${consumed ? 'consumed' : 'remaining'}`}
             >
               {nibble.toString(16)}
             </span>
